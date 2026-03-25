@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>JSON Compare (Vue 2 + Bootstrap)</title>
+
+  <!-- Bootstrap 5 (CSS only) -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"/>
+
+  <!-- Vue 2 -->
+  <script src="https://cdn.jsdelivr.net/npm/vue@2/dist/vue.js"></script>
+
+  <style>
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    textarea { min-height: 260px; resize: vertical; }
+    .diff-table td, .diff-table th { vertical-align: top; }
+    .wrap-anywhere { overflow-wrap: anywhere; word-break: break-word; }
+  </style>
+</head>
+
+<body class="bg-light">
+  <div id="app" class="container py-4">
+    <div class="d-flex align-items-center justify-content-between mb-3">
+      <h1 class="h4 mb-0">JSON Compare</h1>
+      <div class="d-flex gap-2">
+        <button class="btn btn-outline-secondary btn-sm" @click="swap" :disabled="busy">Swap</button>
+        <button class="btn btn-outline-secondary btn-sm" @click="prettify('left')" :disabled="busy">Prettify Left</button>
+        <button class="btn btn-outline-secondary btn-sm" @click="prettify('right')" :disabled="busy">Prettify Right</button>
+        <button class="btn btn-outline-danger btn-sm" @click="clearAll" :disabled="busy">Clear</button>
+      </div>
+    </div>
+
+    <div class="row g-3">
+      <div class="col-12 col-lg-6">
+        <div class="card shadow-sm">
+          <div class="card-header bg-white">
+            <div class="d-flex align-items-center justify-content-between">
+              <span class="fw-semibold">Left JSON</span>
+              <span class="badge text-bg-secondary mono">{{ leftStats }}</span>
+            </div>
+          </div>
+          <div class="card-body">
+            <textarea class="form-control mono" v-model.trim="leftText" placeholder='Paste JSON object/array here...'></textarea>
+            <div v-if="leftError" class="alert alert-danger mt-2 mb-0 mono wrap-anywhere">
+              {{ leftError }}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12 col-lg-6">
+        <div class="card shadow-sm">
+          <div class="card-header bg-white">
+            <div class="d-flex align-items-center justify-content-between">
+              <span class="fw-semibold">Right JSON</span>
+              <span class="badge text-bg-secondary mono">{{ rightStats }}</span>
+            </div>
+          </div>
+          <div class="card-body">
+            <textarea class="form-control mono" v-model.trim="rightText" placeholder='Paste JSON object/array here...'></textarea>
+            <div v-if="rightError" class="alert alert-danger mt-2 mb-0 mono wrap-anywhere">
+              {{ rightError }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="d-flex align-items-center justify-content-between mt-3">
+      <div class="d-flex gap-2 align-items-center">
+        <button class="btn btn-primary" @click="compare" :disabled="busy">
+          <span v-if="!busy">Compare</span>
+          <span v-else>Comparing...</span>
+        </button>
+
+        <div class="form-check ms-2">
+          <input class="form-check-input" type="checkbox" id="caseSensitive" v-model="options.caseSensitive">
+          <label class="form-check-label" for="caseSensitive">
+            Case-sensitive string compare
+          </label>
+        </div>
+
+        <div class="form-check ms-2">
+          <input class="form-check-input" type="checkbox" id="treatMissingAsNull" v-model="options.treatMissingAsNull">
+          <label class="form-check-label" for="treatMissingAsNull">
+            Treat missing key as null
+          </label>
+        </div>
+      </div>
+
+      <div class="text-muted small">
+        Diffs: <span class="fw-semibold">{{ diffs.length }}</span>
+      </div>
+    </div>
+
+    <div class="mt-3">
+      <div v-if="compareError" class="alert alert-danger mono wrap-anywhere">
+        {{ compareError }}
+      </div>
+
+      <div v-if="!compareError && hasCompared && diffs.length === 0" class="alert alert-success">
+        No differences found ✅
+      </div>
+
+      <div v-if="diffs.length > 0" class="card shadow-sm">
+        <div class="card-header bg-white d-flex align-items-center justify-content-between">
+          <span class="fw-semibold">Differences</span>
+          <button class="btn btn-outline-secondary btn-sm" @click="copyDiffs">Copy diffs (JSON)</button>
+        </div>
+
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0 diff-table">
+            <thead class="table-light">
+              <tr>
+                <th style="width: 34%">Path</th>
+                <th style="width: 16%">Type</th>
+                <th style="width: 25%">Left</th>
+                <th style="width: 25%">Right</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(d, i) in diffs" :key="i">
+                <td class="mono wrap-anywhere">{{ d.path }}</td>
+                <td>
+                  <span class="badge"
+                        :class="badgeClass(d.kind)">
+                    {{ d.kind }}
+                  </span>
+                </td>
+                <td class="mono wrap-anywhere">{{ d.left }}</td>
+                <td class="mono wrap-anywhere">{{ d.right }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card-footer bg-white small text-muted">
+          Notes: arrays are compared by index. Objects are compared by keys (union of keys).
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    new Vue({
+      el: '#app',
+      data() {
+        return {
+          leftText: '',
+          rightText: '',
+          leftError: '',
+          rightError: '',
+          compareError: '',
+          diffs: [],
+          busy: false,
+          hasCompared: false,
+          options: {
+            caseSensitive: true,
+            treatMissingAsNull: false
+          }
+        };
+      },
+      computed: {
+        leftStats() { return this.simpleStats(this.leftText); },
+        rightStats() { return this.simpleStats(this.rightText); }
+      },
+      methods: {
+        simpleStats(txt) {
+          const chars = (txt || '').length;
+          const lines = (txt || '').split('\n').length;
+          return `${lines} line${lines === 1 ? '' : 's'} · ${chars} ch`;
+        },
+        badgeClass(kind) {
+          switch (kind) {
+            case 'type': return 'text-bg-warning';
+            case 'value': return 'text-bg-danger';
+            case 'missing-left':
+            case 'missing-right': return 'text-bg-info';
+            default: return 'text-bg-secondary';
+          }
+        },
+        clearAll() {
+          this.leftText = '';
+          this.rightText = '';
+          this.leftError = '';
+          this.rightError = '';
+          this.compareError = '';
+          this.diffs = [];
+          this.hasCompared = false;
+        },
+        swap() {
+          const t = this.leftText;
+          this.leftText = this.rightText;
+          this.rightText = t;
+          this.leftError = '';
+          this.rightError = '';
+          this.compareError = '';
+          this.diffs = [];
+          this.hasCompared = false;
+        },
+        prettify(side) {
+          this.leftError = '';
+          this.rightError = '';
+          this.compareError = '';
+
+          const target = side === 'left' ? 'leftText' : 'rightText';
+          const raw = this[target];
+
+          if (!raw) return;
+
+          try {
+            const obj = JSON.parse(raw);
+            this[target] = JSON.stringify(obj, null, 2);
+          } catch (e) {
+            const msg = (e && e.message) ? e.message : String(e);
+            if (side === 'left') this.leftError = msg;
+            else this.rightError = msg;
+          }
+        },
+        compare() {
+          this.busy = true;
+          this.leftError = '';
+          this.rightError = '';
+          this.compareError = '';
+          this.diffs = [];
+          this.hasCompared = true;
+
+          let leftObj, rightObj;
+
+          try {
+            leftObj = JSON.parse(this.leftText || 'null');
+          } catch (e) {
+            this.leftError = (e && e.message) ? e.message : String(e);
+            this.busy = false;
+            return;
+          }
+
+          try {
+            rightObj = JSON.parse(this.rightText || 'null');
+          } catch (e) {
+            this.rightError = (e && e.message) ? e.message : String(e);
+            this.busy = false;
+            return;
+          }
+
+          try {
+            const diffs = [];
+            this.diffWalk(leftObj, rightObj, '$', diffs);
+            this.diffs = diffs;
+          } catch (e) {
+            this.compareError = (e && e.message) ? e.message : String(e);
+          } finally {
+            this.busy = false;
+          }
+        },
+        isObject(x) {
+          return x !== null && typeof x === 'object' && !Array.isArray(x);
+        },
+        typeOf(x) {
+          if (x === null) return 'null';
+          if (Array.isArray(x)) return 'array';
+          return typeof x; // object, string, number, boolean, undefined (shouldn't appear in JSON)
+        },
+        fmt(x) {
+          // keep cells readable, but still informative
+          const t = this.typeOf(x);
+          if (t === 'string') return this.options.caseSensitive ? `"${x}"` : `"${x}" (ci)`;
+          if (t === 'number' || t === 'boolean' || t === 'null') return String(x);
+          if (t === 'array' || t === 'object') {
+            try { return JSON.stringify(x); } catch (_) { return `[${t}]`; }
+          }
+          return String(x);
+        },
+        equalValues(a, b) {
+          // same type? compare directly, with optional case-insensitive string compare
+          if (typeof a === 'string' && typeof b === 'string' && !this.options.caseSensitive) {
+            return a.toLowerCase() === b.toLowerCase();
+          }
+          return Object.is(a, b);
+        },
+        diffWalk(a, b, path, out) {
+          const ta = this.typeOf(a);
+          const tb = this.typeOf(b);
+
+          if (ta !== tb) {
+            out.push({ path, kind: 'type', left: `${ta}: ${this.fmt(a)}`, right: `${tb}: ${this.fmt(b)}` });
+            return;
+          }
+
+          // primitives
+          if (ta !== 'object' && ta !== 'array') {
+            if (!this.equalValues(a, b)) {
+              out.push({ path, kind: 'value', left: this.fmt(a), right: this.fmt(b) });
+            }
+            return;
+          }
+
+          // arrays
+          if (ta === 'array') {
+            const maxLen = Math.max(a.length, b.length);
+            for (let i = 0; i < maxLen; i++) {
+              const hasA = i < a.length;
+              const hasB = i < b.length;
+
+              if (!hasA && hasB) {
+                out.push({ path: `${path}[${i}]`, kind: 'missing-left', left: '(missing)', right: this.fmt(b[i]) });
+                continue;
+              }
+              if (hasA && !hasB) {
+                out.push({ path: `${path}[${i}]`, kind: 'missing-right', left: this.fmt(a[i]), right: '(missing)' });
+                continue;
+              }
+              this.diffWalk(a[i], b[i], `${path}[${i}]`, out);
+            }
+            return;
+          }
+
+          // objects
+          const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+          for (const k of keys) {
+            const hasA = Object.prototype.hasOwnProperty.call(a, k);
+            const hasB = Object.prototype.hasOwnProperty.call(b, k);
+
+            const p = `${path}.${this.safeKey(k)}`;
+
+            if (!hasA && hasB) {
+              const rightVal = b[k];
+              const leftVal = this.options.treatMissingAsNull ? null : undefined;
+              if (this.options.treatMissingAsNull) {
+                // compare null vs rightVal
+                this.diffWalk(leftVal, rightVal, p, out);
+              } else {
+                out.push({ path: p, kind: 'missing-left', left: '(missing)', right: this.fmt(rightVal) });
+              }
+              continue;
+            }
+
+            if (hasA && !hasB) {
+              const leftVal = a[k];
+              const rightVal = this.options.treatMissingAsNull ? null : undefined;
+              if (this.options.treatMissingAsNull) {
+                this.diffWalk(leftVal, rightVal, p, out);
+              } else {
+                out.push({ path: p, kind: 'missing-right', left: this.fmt(leftVal), right: '(missing)' });
+              }
+              continue;
+            }
+
+            this.diffWalk(a[k], b[k], p, out);
+          }
+        },
+        safeKey(k) {
+          // If key contains chars that break dot notation, display bracket form
+          // but keep path stable & readable.
+          if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(k)) return k;
+          // return ["..."] style but without changing the caller's dot-join logic too much
+          return `["${String(k).replace(/"/g, '\\"')}"]`;
+        },
+        copyDiffs() {
+          const payload = JSON.stringify(this.diffs, null, 2);
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(payload);
+          } else {
+            // fallback
+            const ta = document.createElement('textarea');
+            ta.value = payload;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+          }
+        }
+      }
+    });
+  </script>
+</body>
+</html>

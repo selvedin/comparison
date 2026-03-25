@@ -1,21 +1,11 @@
 pipeline {
-  agent {
-    docker {
-      image 'node:18'
-    }
-  }
-
+  agent any
   stages {
-    stage('Checkout') {
+    stage('Docker check') {
       steps {
-        checkout scm
-      }
-    }
-
-    stage('Inspect') {
-      steps {
-        sh 'node -v'
-        sh 'npm -v'
+        sh 'whoami'
+        sh 'docker version'
+        sh 'docker ps'
       }
     }
   }

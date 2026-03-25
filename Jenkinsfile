@@ -10,8 +10,15 @@ pipeline {
 
     stage('Build') {
       steps {
-        echo 'Building...'
+        echo 'Preparing app...'
         sh 'ls -la'
+      }
+    }
+
+    stage('Test') {
+      steps {
+        echo 'Running checks...'
+        sh 'grep -i vue index.html || true'
       }
     }
   }

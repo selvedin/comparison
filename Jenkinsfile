@@ -1,5 +1,9 @@
 pipeline {
-  agent any
+  agent {
+    docker {
+      image 'node:18'
+    }
+  }
 
   stages {
     stage('Checkout') {
@@ -8,17 +12,10 @@ pipeline {
       }
     }
 
-    stage('Build') {
+    stage('Inspect') {
       steps {
-        echo 'Preparing app...'
-        sh 'ls -la'
-      }
-    }
-
-    stage('Test') {
-      steps {
-        echo 'Running checks...'
-        sh 'grep -i vue index.html || true'
+        sh 'node -v'
+        sh 'npm -v'
       }
     }
   }

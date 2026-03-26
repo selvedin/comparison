@@ -10,7 +10,7 @@ pipeline {
 
     stage('Checkout') {
       steps {
-        git url: 'https://github.com/selvedin/comparison.git', branch: 'main'
+        checkout scm
       }
     }
 
